@@ -25,34 +25,72 @@ jobs:
         with:
           ndk-version: r26b
 
-      - name: Install build deps and mlc packages
+      - name: Install build deps and check TVM structure
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev
-          pip install --pre -U -f https://mlc.ai/wheels mlc-llm-nightly-cpu mlc-ai-nightly-cpu
           pip install psutil requests tqdm numpy
+          # Find TVM dir
+          if [ -d "3rdparty/tvm" ]; then echo "TVM_DIR=3rdparty/tvm" >> $GITHUB_ENV
+          elif [ -d "tvm" ]; then echo "TVM_DIR=tvm" >> $GITHUB_ENV
+          else echo "TVM not found!"; exit 1; fi
+          # Check TVM Python structure
+          echo "=== tvm/__init__.py (first 30 lines) ==="
+          head -30 $TVM_DIR/python/tvm/__init__.py 2>/dev/null || echo "(no __init__.py)"
+          echo "=== ls tvm/python/tvm ==="
+          ls -la $TVM_DIR/python/tvm/ 2>/dev/null
+          echo "=== Looking for setup.py ==="
+          find $TVM_DIR -name "setup.py" -maxdepth 3 2>/dev/null
+          echo "=== Looking for _ffi ==="
+          find $TVM_DIR -name "_ffi" -maxdepth 4 2>/dev/null
 
-      - name: Fix libtvm.so
+      - name: Build TVM from source
         run: |
-          TVM_PKG=$(python -c "import tvm; import os; print(os.path.dirname(tvm.__file__))")
-          TVM_LIB="$TVM_PKG/lib"
-          echo "TVM lib dir: $TVM_LIB"
-          ls -la "$TVM_LIB"
-          # Find libmlc_llm_module.so without importing mlc_llm (would fail without fix)
-          MLC_LIB=$(find /opt/hostedtoolcache /usr -name "libmlc_llm_module.so" 2>/dev/null | head -1)
-          if [ -n "$MLC_LIB" ]; then
-            echo "Checking libmlc_llm_module.so NEEDED..."
-            (readelf -d "$MLC_LIB" 2>/dev/null | grep NEEDED) || (objdump -p "$MLC_LIB" 2>/dev/null | grep NEEDED) || echo "(no NEEDED info)"
-          fi
-          # Symlink libtvm.so to compiler lib (has both runtime and compiler symbols)
-          if [ -f "$TVM_LIB/libtvm_compiler.so" ]; then
-            ln -sf "$TVM_LIB/libtvm_compiler.so" "$TVM_LIB/libtvm.so"
-            echo "Symlinked libtvm.so -> libtvm_compiler.so"
-          elif [ -f "$TVM_LIB/libtvm_runtime.so" ]; then
-            ln -sf "$TVM_LIB/libtvm_runtime.so" "$TVM_LIB/libtvm.so"
-            echo "Symlinked libtvm.so -> libtvm_runtime.so"
-          fi
-          echo "TVM_LIB_DIR=$TVM_LIB" >> $GITHUB_ENV
+          cd $TVM_DIR
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LLVM=llvm-config-15 \
+            -DUSE_VULKAN=OFF \
+            -DUSE_CUDA=OFF \
+            -DUSE_OPENCL=OFF \
+            -DUSE_METAL=OFF \
+            -DUSE_ROCM=OFF \
+            -DHIDE_PRIVATE_SYMBOLS=OFF
+          ninja -j$(nproc)
+          echo "TVM_BUILD_DIR=$PWD" >> $GITHUB_ENV
+          echo "PYTHONPATH=${{ github.workspace }}/$TVM_DIR/python" >> $GITHUB_ENV
+
+      - name: Patch tvm.contrib modules
+        run: |
+          CONTRIB="${{ github.workspace }}/$TVM_DIR/python/tvm/contrib"
+          # ndk.py - no _ffi import, use subprocess directly
+          grep -q "create_shared" "$CONTRIB/ndk.py" 2>/dev/null || printf 'import subprocess\ndef create_shared(output, objects, options=None, cc_exe="aarch64-linux-android24-clang"):\n    cmd = [cc_exe, "-shared", "-o", output] + list(objects)\n    if options:\n        cmd.extend(options)\n    subprocess.check_call(cmd)\n    return output\ndef cross_compiler(compile_func):\n    return compile_func\n' > "$CONTRIB/ndk.py"
+          # tar.py
+          grep -q "tar(" "$CONTRIB/tar.py" 2>/dev/null || printf 'import os, tarfile\ndef tar(output, files):\n    with tarfile.open(output, "w:") as tf:\n        for f in files:\n            tf.add(f, arcname=os.path.basename(f))\n    return output\n' > "$CONTRIB/tar.py"
+          # xcode.py
+          [ -f "$CONTRIB/xcode.py" ] || printf '# stub\n' > "$CONTRIB/xcode.py"
+          echo "Patched contrib modules"
+
+      - name: Build mlc-llm from source
+        run: |
+          export LD_LIBRARY_PATH="${{ github.workspace }}/$TVM_DIR/build:$LD_LIBRARY_PATH"
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LLVM=llvm-config-15 \
+            -DUSE_VULKAN=OFF \
+            -DUSE_CUDA=OFF \
+            -DUSE_OPENCL=OFF \
+            -DUSE_METAL=OFF \
+            -DUSE_ROCM=OFF
+          ninja -j$(nproc)
+          cd ..
+          pip install -e .
+
+      - name: Write compile wrapper
+        run: |
+          printf 'import ctypes, os, sys\nlibs_dir = os.path.join(os.environ["TVM_BUILD_DIR"])\nctypes.CDLL(os.path.join(libs_dir, "libtvm_runtime.so"), mode=ctypes.RTLD_GLOBAL)\nctypes.CDLL(os.path.join(libs_dir, "libtvm.so"), mode=ctypes.RTLD_GLOBAL)\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
 
       - name: HuggingFace login (optional)
         env:
@@ -63,37 +101,10 @@ jobs:
             python -c "from huggingface_hub import login; login('$HF_TOKEN')"
           fi
 
-      - name: Verify mlc_llm import works
-        run: |
-          echo "TVM_LIB_DIR=$TVM_LIB_DIR"
-          ls -la "$TVM_LIB_DIR"/libtvm*.so 2>/dev/null || true
-          ls -la "$TVM_LIB_DIR"/libtvm_ffi* 2>/dev/null || true
-          export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
-          python -c "import ctypes, os; lib = os.path.join(os.environ['TVM_LIB_DIR'], 'libtvm_runtime.so'); print('Loading:', lib); ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL); import mlc_llm; print('mlc_llm imported OK')"
-
       - name: Configure for Qwen3-0.6B-q4f16_1-MLC
         run: |
           mkdir -p android/MLCChat
-          cat > android/MLCChat/mlc-package-config.json << 'YAMLEOF'
-          {
-            "device": "android",
-            "model_list": [
-              {
-                "model": "HF://NakshatraNeha/Qwen3-0.6B-q4f16_1-MLC",
-                "model_id": "Qwen3-0.6B-q4f16_1-MLC",
-                "estimated_vram_bytes": 800000000,
-                "overrides": {
-                  "prefill_chunk_size": 128,
-                  "context_window_size": 2048
-                }
-              }
-            ]
-          }
-          YAMLEOF
-
-      - name: Write wrapper script for mlc_llm package
-        run: |
-          printf 'import ctypes, os, sys\ntvm_lib_dir = os.environ["TVM_LIB_DIR"]\nctypes.CDLL(os.path.join(tvm_lib_dir, "libtvm_runtime.so"), mode=ctypes.RTLD_GLOBAL)\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
+          printf '{\n  "device": "android",\n  "model_list": [\n    {\n      "model": "HF://NakshatraNeha/Qwen3-0.6B-q4f16_1-MLC",\n      "model_id": "Qwen3-0.6B-q4f16_1-MLC",\n      "estimated_vram_bytes": 800000000,\n      "overrides": {\n        "prefill_chunk_size": 128,\n        "context_window_size": 2048\n      }\n    }\n  ]\n}\n' > android/MLCChat/mlc-package-config.json
 
       - name: Compile model library
         env:
@@ -101,7 +112,7 @@ jobs:
           TVM_NDK_CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}
         run: |
-          export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$TVM_BUILD_DIR:$LD_LIBRARY_PATH"
           python wrapper.py
 
       - name: Upload compiled model library
