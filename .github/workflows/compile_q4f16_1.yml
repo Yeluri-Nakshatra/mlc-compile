@@ -60,6 +60,7 @@ jobs:
             -DHIDE_PRIVATE_SYMBOLS=OFF
           ninja -j$(nproc)
           echo "TVM_BUILD_DIR=$PWD" >> $GITHUB_ENV
+          echo "TVM_LIB_DIR=$PWD/lib" >> $GITHUB_ENV
           echo "PYTHONPATH=${{ github.workspace }}/$TVM_DIR/python" >> $GITHUB_ENV
 
       - name: Patch tvm.contrib modules
@@ -75,7 +76,7 @@ jobs:
 
       - name: Build mlc-llm from source
         run: |
-          export LD_LIBRARY_PATH="${{ github.workspace }}/$TVM_DIR/build:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
           mkdir -p build && cd build
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -91,7 +92,7 @@ jobs:
 
       - name: Write compile wrapper
         run: |
-          printf 'import ctypes, os, sys\nlibs_dir = os.path.join(os.environ["TVM_BUILD_DIR"])\nctypes.CDLL(os.path.join(libs_dir, "libtvm_runtime.so"), mode=ctypes.RTLD_GLOBAL)\nctypes.CDLL(os.path.join(libs_dir, "libtvm.so"), mode=ctypes.RTLD_GLOBAL)\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
+          printf 'import ctypes, os, sys\nlibs_dir = os.environ["TVM_LIB_DIR"]\nctypes.CDLL(os.path.join(libs_dir, "libtvm_runtime.so"), mode=ctypes.RTLD_GLOBAL)\nctypes.CDLL(os.path.join(libs_dir, "libtvm.so"), mode=ctypes.RTLD_GLOBAL)\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
 
       - name: HuggingFace login (optional)
         env:
@@ -113,7 +114,7 @@ jobs:
           TVM_NDK_CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}
         run: |
-          export LD_LIBRARY_PATH="$TVM_BUILD_DIR:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
           python wrapper.py
 
       - name: Upload compiled model library
