@@ -1,0 +1,164 @@
+name: Compile Qwen3-0.6B-q4f16_1 for Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout mlc-llm
+        uses: actions/checkout@v4
+        with:
+          repository: mlc-ai/mlc-llm
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev
+          curl https://sh.rustup.rs -sSf | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustup target add aarch64-linux-android
+
+      - name: Find TVM submodule location
+        run: |
+          if [ -d "3rdparty/tvm" ]; then
+            echo "TVM_DIR=3rdparty/tvm" >> $GITHUB_ENV
+          elif [ -d "tvm" ]; then
+            echo "TVM_DIR=tvm" >> $GITHUB_ENV
+          else
+            echo "TVM not found!"; exit 1
+          fi
+
+      - name: Build TVM from source
+        run: |
+          cd $TVM_DIR
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LLVM=llvm-config-15 \
+            -DUSE_VULKAN=OFF \
+            -DUSE_CUDA=OFF \
+            -DUSE_OPENCL=OFF \
+            -DUSE_METAL=OFF \
+            -DUSE_ROCM=OFF \
+            -DHIDE_PRIVATE_SYMBOLS=ON \
+            -DUSE_LIBBACKTRACE=AUTO \
+            -DUSE_CCACHE=OFF
+          ninja -j$(nproc)
+          echo "TVM_BUILD_DIR=$PWD" >> $GITHUB_ENV
+          echo "PYTHONPATH=${{ github.workspace }}/$TVM_DIR/python" >> $GITHUB_ENV
+
+      - name: Install mlc-llm Python dependencies
+        run: pip install psutil requests tqdm numpy
+
+      - name: Ensure tvm.contrib has ndk module
+        run: |
+          TVM_CONTRIB_DIR="${{ github.workspace }}/$TVM_DIR/python/tvm/contrib"
+          export TVM_CONTRIB_DIR
+          echo "=== Contents of $TVM_CONTRIB_DIR ==="
+          ls -la "$TVM_CONTRIB_DIR"
+          python3 << 'PYEOF'
+import os
+d = os.environ['TVM_CONTRIB_DIR']
+if not os.path.exists(os.path.join(d, 'ndk.py')):
+    with open(os.path.join(d, 'ndk.py'), 'w') as f:
+        f.write('import tvm\n')
+        f.write('import tvm._ffi\n')
+        f.write('from tvm.contrib import cc\n\n')
+        f.write('def create_shared(output, objects, options=None, cc_exe="aarch64-linux-android24-clang"):\n')
+        f.write('    return cc.create_shared(output, objects, options, cc_exe)\n\n')
+        f.write('def cross_compiler(compile_func):\n')
+        f.write('    return tvm._ffi.register_func("tvm.cross_compiler", compile_func, override=True)\n')
+    print('Created ndk.py')
+if not os.path.exists(os.path.join(d, 'tar.py')):
+    with open(os.path.join(d, 'tar.py'), 'w') as f:
+        f.write('import os, tarfile\n\n')
+        f.write('def tar(output, files):\n')
+        f.write('    with tarfile.open(output, "w:") as tf:\n')
+        f.write('        for f in files:\n')
+        f.write('            tf.add(f, arcname=os.path.basename(f))\n')
+        f.write('    return output\n')
+    print('Created tar.py')
+if not os.path.exists(os.path.join(d, 'xcode.py')):
+    with open(os.path.join(d, 'xcode.py'), 'w') as f:
+        f.write('# stub\n')
+    print('Created xcode.py')
+PYEOF
+
+      - name: Build mlc-llm from source
+        run: |
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LLVM=llvm-config-15 \
+            -DUSE_VULKAN=OFF \
+            -DUSE_CUDA=OFF \
+            -DUSE_OPENCL=OFF \
+            -DUSE_METAL=OFF \
+            -DUSE_ROCM=OFF
+          ninja -j$(nproc)
+          cd ..
+          pip install -e .
+
+      - name: HuggingFace login (optional)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -n "$HF_TOKEN" ]; then
+            pip install huggingface_hub -q
+            python -c "from huggingface_hub import login; login('$HF_TOKEN')"
+          fi
+
+      - name: Configure for Qwen3-0.6B-q4f16_1-MLC
+        run: |
+          mkdir -p android/MLCChat
+          cat > android/MLCChat/mlc-package-config.json << 'EOF'
+          {
+            "device": "android",
+            "model_list": [
+              {
+                "model": "HF://NakshatraNeha/Qwen3-0.6B-q4f16_1-MLC",
+                "model_id": "Qwen3-0.6B-q4f16_1-MLC",
+                "estimated_vram_bytes": 800000000,
+                "overrides": {
+                  "prefill_chunk_size": 128,
+                  "context_window_size": 2048
+                }
+              }
+            ]
+          }
+          EOF
+
+      - name: Compile model library
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+          TVM_NDK_CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}
+        run: |
+          export LD_LIBRARY_PATH="${{ github.workspace }}/$TVM_DIR/build:${{ github.workspace }}/build:$LD_LIBRARY_PATH"
+          cd android/MLCChat
+          python -m mlc_llm package
+
+      - name: Upload compiled model library
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-q4f16_1-android-model-lib
+          path: |
+            android/MLCChat/dist/libs/*.tar
+            android/MLCChat/dist/bundle/
+            android/MLCChat/dist/lib/
+          if-no-files-found: warn
