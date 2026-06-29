@@ -101,22 +101,25 @@ jobs:
         run: |
           printf 'import os, sys\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
 
-      - name: HuggingFace login (optional)
+      - name: HuggingFace login and debug clone
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          echo "HF_TOKEN is set: $([ -n "$HF_TOKEN" ] && echo YES || echo NO)"
           if [ -n "$HF_TOKEN" ]; then
             pip install huggingface_hub -q
             python -c "from huggingface_hub import login; login('$HF_TOKEN')"
-            # Also set git credentials for HF
             git config --global credential.helper store
             echo "https://git:$HF_TOKEN@huggingface.co" > ~/.git-credentials
           fi
+          echo "=== Testing git clone ==="
+          git lfs install
+          git clone https://huggingface.co/NakshatraNeha/Qwen3-0.6B-q4f16_1-MLC /tmp/test_hf_clone --depth 1 2>&1 || echo "CLONE FAILED with exit $?"
 
       - name: Configure for Qwen3-0.6B-q4f16_1-MLC
         run: |
           mkdir -p android/MLCChat
-          printf '{\n  "device": "android",\n  "model_list": [\n    {\n      "model": "HF://NakshatraNeha/Qwen3-0.6B-q4f16_1-MLC",\n      "model_id": "Qwen3-0.6B-q4f16_1-MLC",\n      "estimated_vram_bytes": 800000000,\n      "overrides": {\n        "prefill_chunk_size": 128,\n        "context_window_size": 2048\n      }\n    }\n  ]\n}\n' > android/MLCChat/mlc-package-config.json
+          printf '{\n  "device": "android",\n  "model_list": [\n    {\n      "model": "HF://mlc-ai/Qwen3-0.6B-q4f16_1-MLC",\n      "model_id": "Qwen3-0.6B-q4f16_1-MLC",\n      "estimated_vram_bytes": 800000000,\n      "overrides": {\n        "prefill_chunk_size": 128,\n        "context_window_size": 2048\n      }\n    }\n  ]\n}\n' > android/MLCChat/mlc-package-config.json
 
       - name: Compile model library
         env:
