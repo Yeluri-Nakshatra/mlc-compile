@@ -66,7 +66,13 @@ jobs:
       - name: Verify mlc_llm import works
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
-          python -c "import mlc_llm; print('mlc_llm imported OK')"
+          python -c "
+import ctypes, os
+lib = os.path.join(os.environ['TVM_LIB_DIR'], 'libtvm_runtime.so')
+ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+import mlc_llm
+print('mlc_llm imported OK')
+"
 
       - name: Configure for Qwen3-0.6B-q4f16_1-MLC
         run: |
@@ -88,6 +94,18 @@ jobs:
           }
           YAMLEOF
 
+      - name: Write wrapper script for mlc_llm package
+        run: |
+          cat > wrapper.py << 'YAMLEOF'
+import ctypes, os, sys
+tvm_lib_dir = os.environ['TVM_LIB_DIR']
+ctypes.CDLL(os.path.join(tvm_lib_dir, 'libtvm_runtime.so'), mode=ctypes.RTLD_GLOBAL)
+os.chdir(os.path.join(os.environ['MLC_LLM_SOURCE_DIR'], 'android', 'MLCChat'))
+sys.argv = ['mlc_llm', 'package']
+from mlc_llm.__main__ import main
+main()
+YAMLEOF
+
       - name: Compile model library
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -95,8 +113,7 @@ jobs:
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
-          cd android/MLCChat
-          python -m mlc_llm package
+          python wrapper.py
 
       - name: Upload compiled model library
         uses: actions/upload-artifact@v4
