@@ -30,19 +30,20 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev
           pip install psutil requests tqdm numpy
-          # Find TVM dir
-          if [ -d "3rdparty/tvm" ]; then echo "TVM_DIR=3rdparty/tvm" >> $GITHUB_ENV
-          elif [ -d "tvm" ]; then echo "TVM_DIR=tvm" >> $GITHUB_ENV
+          # Find TVM dir and set for subsequent steps
+          if [ -d "3rdparty/tvm" ]; then TVM=3rdparty/tvm
+          elif [ -d "tvm" ]; then TVM=tvm
           else echo "TVM not found!"; exit 1; fi
+          echo "TVM_DIR=$TVM" >> $GITHUB_ENV
           # Check TVM Python structure
           echo "=== tvm/__init__.py (first 30 lines) ==="
-          head -30 $TVM_DIR/python/tvm/__init__.py 2>/dev/null || echo "(no __init__.py)"
+          head -30 $TVM/python/tvm/__init__.py 2>/dev/null || echo "(no __init__.py)"
           echo "=== ls tvm/python/tvm ==="
-          ls -la $TVM_DIR/python/tvm/ 2>/dev/null
+          ls -la $TVM/python/tvm/
           echo "=== Looking for setup.py ==="
-          find $TVM_DIR -name "setup.py" -maxdepth 3 2>/dev/null
+          find $TVM -name "setup.py" -maxdepth 3 2>/dev/null
           echo "=== Looking for _ffi ==="
-          find $TVM_DIR -name "_ffi" -maxdepth 4 2>/dev/null
+          find $TVM -name "_ffi" -maxdepth 4 2>/dev/null
 
       - name: Build TVM from source
         run: |
