@@ -28,7 +28,8 @@ jobs:
       - name: Install build deps and check TVM structure
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev
+          sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev git-lfs
+          git lfs install
           pip install psutil requests tqdm numpy
           # Find TVM dir and set for subsequent steps
           if [ -d "3rdparty/tvm" ]; then TVM=3rdparty/tvm
@@ -107,6 +108,9 @@ jobs:
           if [ -n "$HF_TOKEN" ]; then
             pip install huggingface_hub -q
             python -c "from huggingface_hub import login; login('$HF_TOKEN')"
+            # Also set git credentials for HF
+            git config --global credential.helper store
+            echo "https://git:$HF_TOKEN@huggingface.co" > ~/.git-credentials
           fi
 
       - name: Configure for Qwen3-0.6B-q4f16_1-MLC
