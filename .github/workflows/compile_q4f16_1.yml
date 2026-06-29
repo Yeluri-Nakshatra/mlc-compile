@@ -56,11 +56,17 @@ jobs:
             -DUSE_CUDA=OFF \
             -DUSE_OPENCL=OFF \
             -DUSE_METAL=OFF \
-            -DUSE_ROCM=OFF \
-            -DHIDE_PRIVATE_SYMBOLS=OFF
+            -DUSE_ROCM=OFF
           ninja -j$(nproc)
+          # TVM split build doesn't produce libtvm.so; create symlink
+          LIBDIR="$PWD/lib"
           echo "TVM_BUILD_DIR=$PWD" >> $GITHUB_ENV
-          echo "TVM_LIB_DIR=$PWD/lib" >> $GITHUB_ENV
+          echo "TVM_LIB_DIR=$LIBDIR" >> $GITHUB_ENV
+          ls -la "$LIBDIR"/*.so 2>/dev/null
+          if [ -f "$LIBDIR/libtvm_compiler.so" ] && [ ! -f "$LIBDIR/libtvm.so" ]; then
+            ln -sf "libtvm_compiler.so" "$LIBDIR/libtvm.so"
+            echo "Created libtvm.so -> libtvm_compiler.so"
+          fi
           echo "PYTHONPATH=${{ github.workspace }}/$TVM_DIR/python" >> $GITHUB_ENV
 
       - name: Patch tvm.contrib modules
