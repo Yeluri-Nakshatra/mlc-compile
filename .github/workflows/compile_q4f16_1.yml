@@ -65,8 +65,11 @@ jobs:
 
       - name: Verify mlc_llm import works
         run: |
+          echo "TVM_LIB_DIR=$TVM_LIB_DIR"
+          ls -la "$TVM_LIB_DIR"/libtvm*.so 2>/dev/null || true
+          ls -la "$TVM_LIB_DIR"/libtvm_ffi* 2>/dev/null || true
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
-          python -c "import ctypes, os; lib = os.path.join(os.environ['TVM_LIB_DIR'], 'libtvm_runtime.so'); ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL); import mlc_llm; print('mlc_llm imported OK')"
+          python -c "import ctypes, os; lib = os.path.join(os.environ['TVM_LIB_DIR'], 'libtvm_runtime.so'); print('Loading:', lib); ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL); import mlc_llm; print('mlc_llm imported OK')"
 
       - name: Configure for Qwen3-0.6B-q4f16_1-MLC
         run: |
