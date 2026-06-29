@@ -98,7 +98,7 @@ jobs:
 
       - name: Write compile wrapper
         run: |
-          printf 'import ctypes, os, sys\nlibs_dir = os.environ["TVM_LIB_DIR"]\nctypes.CDLL(os.path.join(libs_dir, "libtvm_runtime.so"), mode=ctypes.RTLD_GLOBAL)\nctypes.CDLL(os.path.join(libs_dir, "libtvm.so"), mode=ctypes.RTLD_GLOBAL)\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
+          printf 'import os, sys\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
 
       - name: HuggingFace login (optional)
         env:
