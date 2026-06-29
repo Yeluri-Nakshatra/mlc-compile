@@ -43,6 +43,22 @@ jobs:
             echo "TVM not found!"; exit 1
           fi
 
+      - name: Debug TVM structure
+        run: |
+          echo "=== TVM dir contents ==="
+          ls -la $TVM_DIR
+          echo "=== TVM/python/tvm/ ==="
+          ls -la $TVM_DIR/python/tvm/ 2>/dev/null
+          echo "=== TVM/python ==="
+          ls -la $TVM_DIR/python/ 2>/dev/null
+          echo "=== setup.py check ==="
+          find $TVM_DIR -name "setup.py" -maxdepth 4 2>/dev/null
+          echo "=== _ffi check ==="
+          ls -la $TVM_DIR/python/tvm/_ffi/ 2>/dev/null
+          echo "=== build output ==="
+          ls -la $TVM_DIR/build/ 2>/dev/null | head -20
+          find $TVM_DIR/build -name "*.so" -maxdepth 3 2>/dev/null
+
       - name: Build TVM from source
         run: |
           cd $TVM_DIR
@@ -62,8 +78,15 @@ jobs:
           echo "TVM_BUILD_DIR=$PWD" >> $GITHUB_ENV
           echo "PYTHONPATH=${{ github.workspace }}/$TVM_DIR/python" >> $GITHUB_ENV
 
-      - name: Install mlc-llm Python dependencies
-        run: pip install psutil requests tqdm numpy
+      - name: Install TVM pip package (for Python extensions)
+        run: |
+          pip install --pre -U -f https://mlc.ai/wheels mlc-ai-nightly-cpu
+          # Find tvm lib dir and create libtvm.so symlink
+          TVM_LIB=$(python -c "import tvm; import os; print(os.path.join(os.path.dirname(tvm.__file__), 'lib'))")
+          echo "TVM pip lib dir: $TVM_LIB"
+          ls -la "$TVM_LIB"
+          ln -sf "$TVM_LIB/libtvm_runtime.so" "$TVM_LIB/libtvm.so" 2>/dev/null || true
+          ln -sf "$TVM_LIB/libtvm_compiler.so" "$TVM_LIB/libtvm.so" 2>/dev/null || true
 
       - name: Ensure tvm.contrib has ndk module
         run: |
@@ -83,7 +106,7 @@ jobs:
             echo "Created xcode.py"
           fi
 
-      - name: Build mlc-llm from source
+      - name: Build mlc-llm from source (C++ libs only)
         run: |
           mkdir -p build && cd build
           cmake .. -G Ninja \
