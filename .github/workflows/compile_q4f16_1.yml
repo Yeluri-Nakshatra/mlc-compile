@@ -68,36 +68,20 @@ jobs:
       - name: Ensure tvm.contrib has ndk module
         run: |
           TVM_CONTRIB_DIR="${{ github.workspace }}/$TVM_DIR/python/tvm/contrib"
-          export TVM_CONTRIB_DIR
           echo "=== Contents of $TVM_CONTRIB_DIR ==="
           ls -la "$TVM_CONTRIB_DIR"
-          python3 << 'PYEOF'
-import os
-d = os.environ['TVM_CONTRIB_DIR']
-if not os.path.exists(os.path.join(d, 'ndk.py')):
-    with open(os.path.join(d, 'ndk.py'), 'w') as f:
-        f.write('import tvm\n')
-        f.write('import tvm._ffi\n')
-        f.write('from tvm.contrib import cc\n\n')
-        f.write('def create_shared(output, objects, options=None, cc_exe="aarch64-linux-android24-clang"):\n')
-        f.write('    return cc.create_shared(output, objects, options, cc_exe)\n\n')
-        f.write('def cross_compiler(compile_func):\n')
-        f.write('    return tvm._ffi.register_func("tvm.cross_compiler", compile_func, override=True)\n')
-    print('Created ndk.py')
-if not os.path.exists(os.path.join(d, 'tar.py')):
-    with open(os.path.join(d, 'tar.py'), 'w') as f:
-        f.write('import os, tarfile\n\n')
-        f.write('def tar(output, files):\n')
-        f.write('    with tarfile.open(output, "w:") as tf:\n')
-        f.write('        for f in files:\n')
-        f.write('            tf.add(f, arcname=os.path.basename(f))\n')
-        f.write('    return output\n')
-    print('Created tar.py')
-if not os.path.exists(os.path.join(d, 'xcode.py')):
-    with open(os.path.join(d, 'xcode.py'), 'w') as f:
-        f.write('# stub\n')
-    print('Created xcode.py')
-PYEOF
+          if [ ! -f "$TVM_CONTRIB_DIR/ndk.py" ]; then
+            printf 'import tvm\nimport tvm._ffi\nfrom tvm.contrib import cc\n\ndef create_shared(output, objects, options=None, cc_exe="aarch64-linux-android24-clang"):\n    return cc.create_shared(output, objects, options, cc_exe)\n\ndef cross_compiler(compile_func):\n    return tvm._ffi.register_func("tvm.cross_compiler", compile_func, override=True)\n' > "$TVM_CONTRIB_DIR/ndk.py"
+            echo "Created ndk.py"
+          fi
+          if [ ! -f "$TVM_CONTRIB_DIR/tar.py" ]; then
+            printf 'import os, tarfile\n\ndef tar(output, files):\n    with tarfile.open(output, "w:") as tf:\n        for f in files:\n            tf.add(f, arcname=os.path.basename(f))\n    return output\n' > "$TVM_CONTRIB_DIR/tar.py"
+            echo "Created tar.py"
+          fi
+          if [ ! -f "$TVM_CONTRIB_DIR/xcode.py" ]; then
+            printf '# stub\n' > "$TVM_CONTRIB_DIR/xcode.py"
+            echo "Created xcode.py"
+          fi
 
       - name: Build mlc-llm from source
         run: |
