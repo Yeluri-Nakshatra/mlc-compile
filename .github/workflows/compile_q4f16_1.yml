@@ -96,15 +96,7 @@ print('mlc_llm imported OK')
 
       - name: Write wrapper script for mlc_llm package
         run: |
-          cat > wrapper.py << 'YAMLEOF'
-import ctypes, os, sys
-tvm_lib_dir = os.environ['TVM_LIB_DIR']
-ctypes.CDLL(os.path.join(tvm_lib_dir, 'libtvm_runtime.so'), mode=ctypes.RTLD_GLOBAL)
-os.chdir(os.path.join(os.environ['MLC_LLM_SOURCE_DIR'], 'android', 'MLCChat'))
-sys.argv = ['mlc_llm', 'package']
-from mlc_llm.__main__ import main
-main()
-YAMLEOF
+          printf 'import ctypes, os, sys\ntvm_lib_dir = os.environ["TVM_LIB_DIR"]\nctypes.CDLL(os.path.join(tvm_lib_dir, "libtvm_runtime.so"), mode=ctypes.RTLD_GLOBAL)\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
 
       - name: Compile model library
         env:
