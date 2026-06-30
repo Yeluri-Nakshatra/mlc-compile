@@ -28,7 +28,7 @@ jobs:
       - name: Install build deps and debug LLVM
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev git-lfs
+          sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev git-lfs opencl-headers
           git lfs install
           echo "=== LLVM targets ==="
           llvm-config-15 --targets-built 2>/dev/null || echo "llvm-config not found"
@@ -60,7 +60,7 @@ jobs:
             -DUSE_LLVM=llvm-config-15 \
             -DUSE_VULKAN=OFF \
             -DUSE_CUDA=OFF \
-            -DUSE_OPENCL=OFF \
+            -DUSE_OPENCL=ON \
             -DUSE_METAL=OFF \
             -DUSE_ROCM=OFF
           ninja -j$(nproc)
@@ -86,12 +86,25 @@ jobs:
           [ -f "$CONTRIB/xcode.py" ] || printf '# stub\n' > "$CONTRIB/xcode.py"
           echo "Patched contrib modules"
 
-      - name: Patch @T.prim_func decorators to skip well-formed check
+      - name: Patch @T.prim_func decorators for s_tir compatibility
         run: |
+          # Only files with T.sblock_alloc_buffer need s_tir=True
+          find python/mlc_llm -name '*.py' -exec grep -l 'T\.sblock_alloc_buffer' {} \; | while read f; do
+            echo "Patching $f (uses sblock_alloc_buffer)"
+            # Replace bare @T.prim_func
+            sed -i 's/@T\.prim_func$/@T.prim_func(s_tir=True, check_well_formed=False)/' "$f"
+            # Replace @T.prim_func(private=True)
+            sed -i 's/@T\.prim_func(private=True)$/@T.prim_func(private=True, s_tir=True, check_well_formed=False)/' "$f"
+            # Replace @T.prim_func(check_well_formed=False) [safety]
+            sed -i 's/@T\.prim_func(check_well_formed=False)$/@T.prim_func(s_tir=True, check_well_formed=False)/' "$f"
+          done
+          # Files with only T.sblock (not sblock_alloc_buffer) only need check_well_formed=False
           find python/mlc_llm/compiler_pass -name '*.py' -exec grep -l '@T.prim_func' {} \; | while read f; do
-            echo "Patching $f"
-            sed -i 's/@T\.prim_func$/@T.prim_func(check_well_formed=False)/' "$f"
-            sed -i 's/@T\.prim_func(private=True)$/@T.prim_func(private=True, check_well_formed=False)/' "$f"
+            if ! grep -q 'T\.sblock_alloc_buffer' "$f"; then
+              echo "Patching $f (compiler_pass, sblock only)"
+              sed -i 's/@T\.prim_func$/@T.prim_func(check_well_formed=False)/' "$f"
+              sed -i 's/@T\.prim_func(private=True)$/@T.prim_func(private=True, check_well_formed=False)/' "$f"
+            fi
           done
           echo "Patch done"
 
