@@ -86,6 +86,15 @@ jobs:
           [ -f "$CONTRIB/xcode.py" ] || printf '# stub\n' > "$CONTRIB/xcode.py"
           echo "Patched contrib modules"
 
+      - name: Patch @T.prim_func decorators to skip well-formed check
+        run: |
+          find python/mlc_llm/compiler_pass -name '*.py' -exec grep -l '@T.prim_func' {} \; | while read f; do
+            echo "Patching $f"
+            sed -i 's/@T\.prim_func$/@T.prim_func(check_well_formed=False)/' "$f"
+            sed -i 's/@T\.prim_func(private=True)$/@T.prim_func(private=True, check_well_formed=False)/' "$f"
+          done
+          echo "Patch done"
+
       - name: Build mlc-llm from source
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
