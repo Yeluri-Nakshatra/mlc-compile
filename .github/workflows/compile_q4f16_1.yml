@@ -147,6 +147,19 @@ jobs:
           print("Patched matmul.py")
           PYEOF
 
+      - name: Patch lift_global_buffer_alloc.py to skip non-root-block funcs
+        run: |
+          python3 << 'PYEOF'
+          src = open("python/mlc_llm/compiler_pass/lift_global_buffer_alloc.py").read()
+          # Skip PrimFuncs without SBlockRealize body (they have no root block / global alloc)
+          src = src.replace(
+              "            if isinstance(func, tirx.PrimFunc):",
+              "            if isinstance(func, tirx.PrimFunc) and isinstance(func.body, tirx.SBlockRealize):"
+          )
+          open("python/mlc_llm/compiler_pass/lift_global_buffer_alloc.py", "w").write(src)
+          print("Patched lift_global_buffer_alloc.py")
+          PYEOF
+
       - name: Build mlc-llm from source
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
