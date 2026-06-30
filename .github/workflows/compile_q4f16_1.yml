@@ -108,6 +108,25 @@ jobs:
           done
           echo "Patch done"
 
+      - name: Patch low_batch_specialization.py for structural_equal compat
+        run: |
+          F="python/mlc_llm/compiler_pass/low_batch_specialization.py"
+          python3 << 'PYEOF'
+src = open("python/mlc_llm/compiler_pass/low_batch_specialization.py").read()
+# Replace tvm.ir.structural_equal with _structural_equal
+src = src.replace(
+    "tvm.ir.structural_equal(low_batch_func, func)",
+    "_structural_equal(low_batch_func, func)"
+)
+# Insert helper after the last import line
+src = src.replace(
+    "from tvm.s_tir import dlight as dl\n",
+    "from tvm.s_tir import dlight as dl\n\ndef _structural_equal(a, b):\n    try:\n        import tvm\n        tvm.ir.assert_structural_equal(a, b)\n        return True\n    except (ValueError, TypeError):\n        return False\n\n"
+)
+open("python/mlc_llm/compiler_pass/low_batch_specialization.py", "w").write(src)
+print("Patched low_batch_specialization.py")
+PYEOF
+
       - name: Build mlc-llm from source
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
