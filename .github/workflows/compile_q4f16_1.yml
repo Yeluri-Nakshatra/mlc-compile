@@ -25,11 +25,16 @@ jobs:
         with:
           ndk-version: r26b
 
-      - name: Install build deps and check TVM structure
+      - name: Install build deps and debug LLVM
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake ninja-build llvm-15-dev lld-15 clang-15 libtinfo-dev git-lfs
           git lfs install
+          echo "=== LLVM targets ==="
+          llvm-config-15 --targets-built 2>/dev/null || echo "llvm-config not found"
+          llvm-config-15 --help 2>&1 | head -5 || true
+          echo "=== clang targets ==="
+          clang-15 --print-targets 2>/dev/null || true
           pip install psutil requests tqdm numpy
           # Find TVM dir and set for subsequent steps
           if [ -d "3rdparty/tvm" ]; then TVM=3rdparty/tvm
@@ -97,27 +102,21 @@ jobs:
           cd ..
           pip install -e .
 
-      - name: Write compile wrapper
+      - name: Test NDK compiler
         run: |
-          printf 'import os, sys\nos.chdir(os.path.join(os.environ["MLC_LLM_SOURCE_DIR"], "android", "MLCChat"))\nsys.argv = ["mlc_llm", "package"]\nfrom mlc_llm.__main__ import main\nmain()\n' > wrapper.py
+          CC="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          echo "NDK_CC=$CC"
+          ls -la "$CC" 2>/dev/null || echo "CC NOT FOUND"
+          $CC --version 2>&1 || echo "CC failed"
 
-      - name: HuggingFace login and debug clone
+      - name: Configure and compile model directly
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+          TVM_NDK_CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          TVM_BACKTRACE: "1"
+          MLC_LLM_SOURCE_DIR: ${{ github.workspace }}
         run: |
-          echo "HF_TOKEN is set: $([ -n "$HF_TOKEN" ] && echo YES || echo NO)"
-          if [ -n "$HF_TOKEN" ]; then
-            pip install huggingface_hub -q
-            python -c "from huggingface_hub import login; login('$HF_TOKEN')"
-            git config --global credential.helper store
-            echo "https://git:$HF_TOKEN@huggingface.co" > ~/.git-credentials
-          fi
-          echo "=== Testing git clone ==="
-          git lfs install
-          git clone https://huggingface.co/NakshatraNeha/Qwen3-0.6B-q4f16_1-MLC /tmp/test_hf_clone --depth 1 2>&1 || echo "CLONE FAILED with exit $?"
-
-      - name: Configure for Qwen3-0.6B-q4f16_1-MLC
-        run: |
+          export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
           mkdir -p android/MLCChat
           printf '{\n  "device": "android",\n  "model_list": [\n    {\n      "model": "HF://mlc-ai/Qwen3-0.6B-q4f16_1-MLC",\n      "model_id": "Qwen3-0.6B-q4f16_1-MLC",\n      "estimated_vram_bytes": 800000000,\n      "overrides": {\n        "prefill_chunk_size": 128,\n        "context_window_size": 2048\n      }\n    }\n  ]\n}\n' > android/MLCChat/mlc-package-config.json
 
@@ -125,10 +124,12 @@ jobs:
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
           TVM_NDK_CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          TVM_BACKTRACE: "1"
           MLC_LLM_SOURCE_DIR: ${{ github.workspace }}
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
-          python wrapper.py
+          cd android/MLCChat
+          python -m mlc_llm package 2>&1
 
       - name: Upload compiled model library
         uses: actions/upload-artifact@v4
