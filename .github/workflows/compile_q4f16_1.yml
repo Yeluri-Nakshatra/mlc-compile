@@ -248,9 +248,14 @@ jobs:
                   return f'#include "{os.path.join(tvm_ffi_src, p)}"'
               return m.group(0)
           hdr = re.sub(r'#include\s+<([^>]+\.cc)>', replace_include, hdr)
+          # Fix throw InternalError -> TVM_FFI_THROW(InternalError)
+          hdr = hdr.replace(
+              'throw InternalError(file, lineno, message);',
+              'TVM_FFI_THROW(InternalError) << m;'
+          )
           with open(path, 'w') as f:
               f.write(hdr)
-          print("Patched tvm_runtime.h with absolute paths")
+          print("Patched tvm_runtime.h with absolute paths and InternalError fix")
           PYEOF
 
       - name: Configure and compile model directly
