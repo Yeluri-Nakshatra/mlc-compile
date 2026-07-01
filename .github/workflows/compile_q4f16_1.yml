@@ -1,4 +1,4 @@
-﻿name: Compile Qwen3-0.6B-q4f16_1 for Android
+name: Compile Qwen3-0.6B-q4f16_1 for Android
 
 on:
   workflow_dispatch:
@@ -212,24 +212,31 @@ jobs:
           python3 << 'PYEOF'
           import os, re
           ws = os.environ['GITHUB_WORKSPACE']
+          tvm_src = os.path.join(ws, "3rdparty/tvm/src")
+          tvm_ffi_src = os.path.join(ws, "3rdparty/tvm/3rdparty/tvm-ffi/src")
           path = os.path.join(ws, "android/mlc4j/src/cpp/tvm_runtime.h")
+          print(f"WS={ws}")
+          print(f"TVM src={tvm_src}")
+          print(f"tvm_runtime.h={path}")
+          for check in ["runtime/nvtx.cc", "runtime/opencl/opencl_device_api.cc", "ffi/backtrace.cc"]:
+              f1 = os.path.join(tvm_src, check)
+              f2 = os.path.join(tvm_ffi_src, check)
+              print(f"  {check}: exists(tvm_src)={os.path.exists(f1)} exists(tvm_ffi_src)={os.path.exists(f2)}")
           with open(path) as f:
               src = f.read()
-          # Replace angle-bracket includes with quoted relative paths from the header's directory
-          # tvm_runtime.h is at android/mlc4j/src/cpp/
-          # TVM runtime cc's are at 3rdparty/tvm/src/runtime/
-          # Relative: ../../../../3rdparty/tvm/src/runtime/PATH
           def replace_include(m):
-              path = m.group(1)
-              if path.startswith('runtime/'):
-                  return '#include "../../../../3rdparty/tvm/src/runtime/' + path[8:] + '"'
-              elif path.startswith('ffi/'):
-                  return '#include "../../../../3rdparty/tvm/3rdparty/tvm-ffi/src/ffi/' + path[4:] + '"'
+              p = m.group(1)
+              if p.startswith('runtime/'):
+                  abs_path = os.path.join(tvm_src, p)
+                  return f'#include "{abs_path}"'
+              elif p.startswith('ffi/'):
+                  abs_path = os.path.join(tvm_ffi_src, p)
+                  return f'#include "{abs_path}"'
               return m.group(0)
           src = re.sub(r'#include\s+<([^>]+\.cc)>', replace_include, src)
           with open(path, 'w') as f:
               f.write(src)
-          print("Patched tvm_runtime.h: converted <> includes to quoted relative paths")
+          print("Patched tvm_runtime.h with absolute paths")
           PYEOF
 
       - name: Configure and compile model directly
