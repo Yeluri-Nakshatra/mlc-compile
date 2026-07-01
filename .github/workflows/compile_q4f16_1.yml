@@ -170,6 +170,20 @@ jobs:
           print('Patched attach_spec_decode_aux_funcs.py')
           "
 
+      - name: Patch Logging.cmake for mlc4j build compatibility
+        run: |
+          python3 << 'PYEOF'
+          path = "3rdparty/tvm/cmake/modules/Logging.cmake"
+          src = open(path).read()
+          # Guard tvm_libinfo_objs target that doesn't exist in mlc4j runtime-only build
+          src = src.replace(
+              "target_compile_definitions(tvm_libinfo_objs PUBLIC TVM_LOG_CUSTOMIZE=1)",
+              "if(TARGET tvm_libinfo_objs)\n  target_compile_definitions(tvm_libinfo_objs PUBLIC TVM_LOG_CUSTOMIZE=1)\nendif()"
+          )
+          open(path, "w").write(src)
+          print("Patched Logging.cmake")
+          PYEOF
+
       - name: Build mlc-llm from source
         run: |
           export LD_LIBRARY_PATH="$TVM_LIB_DIR:$LD_LIBRARY_PATH"
