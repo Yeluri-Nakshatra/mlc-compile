@@ -207,6 +207,20 @@ jobs:
           ls -la "$CC" 2>/dev/null || echo "CC NOT FOUND"
           $CC --version 2>&1 || echo "CC failed"
 
+      - name: Patch tvm_runtime.h to remove broken nvtx.cc include
+        run: |
+          python3 << 'PYEOF'
+          path = "android/mlc4j/src/cpp/tvm_runtime.h"
+          src = open(path).read()
+          # nvtx.cc may not exist in the checked-out TVM submodule
+          src = src.replace(
+              "#include <runtime/nvtx.cc>",
+              "// #include <runtime/nvtx.cc>  // removed: file may not exist in this TVM version"
+          )
+          open(path, "w").write(src)
+          print("Patched tvm_runtime.h (removed nvtx.cc include)")
+          PYEOF
+
       - name: Configure and compile model directly
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
