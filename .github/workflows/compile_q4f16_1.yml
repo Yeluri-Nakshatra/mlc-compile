@@ -207,19 +207,31 @@ jobs:
           ls -la "$CC" 2>/dev/null || echo "CC NOT FOUND"
           $CC --version 2>&1 || echo "CC failed"
 
-      - name: Link TVM source runtime dir so tvm_runtime.h includes resolve
+      - name: Patch tvm_runtime.h includes to use absolute paths
         run: |
-          # tvm_runtime.h uses <runtime/xxx.cc> includes that need TVM_SOURCE_DIR/src
-          # as an include path.  Symlink TVM's runtime/ into android/mlc4j/src/cpp/
-          # so the include path android/mlc4j/src/cpp resolves them.
-          RUNTIME_DST="android/mlc4j/src/cpp/runtime"
-          if [ ! -L "$RUNTIME_DST" ] && [ ! -d "$RUNTIME_DST" ]; then
-            ln -sf "$PWD/$TVM_DIR/src/runtime" "$RUNTIME_DST"
-            echo "Linked $TVM_DIR/src/runtime -> $RUNTIME_DST"
-            ls -la "$RUNTIME_DST"
-          else
-            echo "runtime/ already exists at $RUNTIME_DST"
-          fi
+          python3 << 'PYEOF'
+          import os
+          ws = os.environ['GITHUB_WORKSPACE']
+          path = os.path.join(ws, "android/mlc4j/src/cpp/tvm_runtime.h")
+          with open(path) as f:
+              src = f.read()
+          # Replace angle-bracket includes with quoted relative paths from the header's directory
+          # tvm_runtime.h is at android/mlc4j/src/cpp/
+          # TVM runtime cc's are at 3rdparty/tvm/src/runtime/
+          # Relative: ../../../../3rdparty/tvm/src/runtime/PATH
+          src = src.replace(
+              '#include <runtime/',
+              '#include "../../../../3rdparty/tvm/src/runtime/'
+          )
+          # ffi cc's are at 3rdparty/tvm/3rdparty/tvm-ffi/src/ffi/
+          src = src.replace(
+              '#include <ffi/',
+              '#include "../../../../3rdparty/tvm/3rdparty/tvm-ffi/src/ffi/'
+          )
+          with open(path, 'w') as f:
+              f.write(src)
+          print("Patched tvm_runtime.h: converted <> includes to quoted relative paths")
+          PYEOF
 
       - name: Configure and compile model directly
         env:
