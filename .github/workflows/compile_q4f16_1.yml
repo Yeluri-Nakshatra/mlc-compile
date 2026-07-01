@@ -210,7 +210,7 @@ jobs:
       - name: Patch tvm_runtime.h includes to use absolute paths
         run: |
           python3 << 'PYEOF'
-          import os
+          import os, re
           ws = os.environ['GITHUB_WORKSPACE']
           path = os.path.join(ws, "android/mlc4j/src/cpp/tvm_runtime.h")
           with open(path) as f:
@@ -219,15 +219,14 @@ jobs:
           # tvm_runtime.h is at android/mlc4j/src/cpp/
           # TVM runtime cc's are at 3rdparty/tvm/src/runtime/
           # Relative: ../../../../3rdparty/tvm/src/runtime/PATH
-          src = src.replace(
-              '#include <runtime/',
-              '#include "../../../../3rdparty/tvm/src/runtime/'
-          )
-          # ffi cc's are at 3rdparty/tvm/3rdparty/tvm-ffi/src/ffi/
-          src = src.replace(
-              '#include <ffi/',
-              '#include "../../../../3rdparty/tvm/3rdparty/tvm-ffi/src/ffi/'
-          )
+          def replace_include(m):
+              path = m.group(1)
+              if path.startswith('runtime/'):
+                  return '#include "../../../../3rdparty/tvm/src/runtime/' + path[8:] + '"'
+              elif path.startswith('ffi/'):
+                  return '#include "../../../../3rdparty/tvm/3rdparty/tvm-ffi/src/ffi/' + path[4:] + '"'
+              return m.group(0)
+          src = re.sub(r'#include\s+<([^>]+\.cc)>', replace_include, src)
           with open(path, 'w') as f:
               f.write(src)
           print("Patched tvm_runtime.h: converted <> includes to quoted relative paths")
